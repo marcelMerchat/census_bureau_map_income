@@ -1,0 +1,183 @@
+---
+title: "Income Data for Lancaster County Pennsylvania"
+author: "Marcel Merchat"
+date: "July 25, 2017"
+output: html_document
+---
+
+```{r setup, echo=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<br><br>
+
+## Income Data Map
+
+<br><br>
+
+#### This map displays information about income in Lancaster County, Pennsylvania. While statistical data is very important, a graph of the data is an introduction that most people can follow. The purpose of a data map is to illustrate data but we still need some typical map information such as roads and landmarks to help locate boundaries for data areas such as census tracts and zip codes. 
+
+#### We use R language tools and packages that have been developed for Census Bureau maps. These tools have been recently modified to accommodate changes at the Census Bureau to provide information at more secure "https" web addresses. 
+
+```{r library, echo = FALSE, warning=FALSE, comment=FALSE, include=FALSE}
+
+# install.packages("devtools")
+# devtools::install_github('walkerke/tigris')
+
+# install.packages("ggmap")
+# install.packages("rgdal")
+# install.packages("sp")
+# install.packages("acs")
+# install.packages("scales")
+# install.packages("leaflet")
+# install.packages("dplyr")
+
+library(magrittr)
+library(raster)
+library(scales)
+library(ggplot2)
+
+#library(ggmap)
+library(rgeos)
+
+library(leaflet)  # for interactive maps (NOT leafletR here)
+library(ggplot2)  # for plotting
+library(dplyr)    # for working with data frames
+
+library(tigris)
+library(sp)
+library(acs)      # American Community Survey
+
+## tigris downloads the TIGER shapefile from the Census Bureau and reads ## it into R with readOGR from the rgdal package to return a spatial data ## frame.
+
+library(rgdal)    # for readOGR and others
+
+##    Census Data
+##    Get Raw Data from Census Bureau
+##    http://censusreporter.org/tables/B19013/
+##    Median household income in the past 12 months (year 2014)
+##    (2014 Inflation-adjusted dollars)
+
+##    Table Number Definitions
+##    https://www.socialexplorer.com/data/ACS2012_5yr/documentation/333af309-eac4-4a1c-861f-eca812e26152
+
+censusapikey <- ""
+
+```
+
+<br><br>
+
+## Download Census Data
+
+```{r downloads, echo=TRUE, cache=TRUE}
+
+gis_tracts <- tracts(state = 'PA', county = c('Lancaster '))
+income_data <- acs.fetch(endyear = 2014, geography = geo.make(state = "PA",
+                          county = "Lancaster", tract = "*"), 
+                          variable = "B19013_001", key=censusapikey)
+
+```
+
+<br><br>
+
+#### We extract the GIS and income data from the downloaded objects. The GIS information for census tract areas matches the areas for the income census data.
+
+```{r unpack_GIS_info, echo=FALSE}
+
+exprvec <- gis_tracts$GEOID
+pattern <- "^.+([[:digit:]]{7})"
+temp1 <- sapply(regmatches(exprvec, gregexpr(pattern, exprvec)),
+                function(e) regmatches(e, regexec(pattern, e))) 
+gis_tracts$GEOID <- do.call(cbind, temp1)[2,]
+
+income_df <- as.data.frame(income_data@estimate)
+income_df$GEOID <- paste0(as.character(income_data@geography$state),
+                          as.character(income_data@geography$county),
+                          income_data@geography$tract)
+
+colnames(income_df) <- c("hhincome","GEOID")
+
+exprvec <- income_df$GEOID
+temp1   <- sapply(regmatches(exprvec, gregexpr(pattern, exprvec)),
+                             function(e) regmatches(e, regexec(pattern, e))) 
+income_df$GEOID <- do.call(cbind, temp1)[2,]
+
+####################################################################
+
+data_merged <- geo_join(gis_tracts, income_df, "GEOID", "GEOID")
+
+```
+
+<br><br>
+
+## GIS Information for New Holland, Pennsylvania in Lancaster County
+
+```{r GIS_info, echo=TRUE}
+
+xlong <- -(76.08778 + 76.0877)/2
+ylat  <-  (40.10222 + 40.102095)/2
+
+```
+
+<br><br>
+
+## Layered Maps made with Leaflet
+
+#### In order to plot census data on the map we make a layered map using the Leaflet package. This will allow us to add census tract areas such as polygons below. The basic leaflet addTiles() function includes some roads and landmarks to help locate areas on the map. There are many alternatives to the basic addTiles layout from other mapmakers. Here is the default map before adding the income data. We have zoomed-in in order to see where New Holland is located. 
+
+```{r leafs, echo=TRUE}
+
+nh <- leaflet() %>%
+                addProviderTiles(providers$OpenStreetMap) %>%
+                addPopups(-76.11, 40.112,
+                    "New Holland, Pennsylvania",
+                    options = popupOptions(closeButton = FALSE)) %>%
+                setView(xlong, ylat, zoom = 12)
+nh
+
+```
+
+<br><br>
+
+## Add Median Income for Lancaster County
+
+#### We add income as color-coded areas on the map using Leaflet. The census tract areas are defined by GIS information. Here we have zoomed out by one step in order to show income for nearby census tracts. Press zoom-in once to match the same area as the plot above. 
+```{r boundaries, echo=FALSE}
+
+library(leaflet)
+
+pal <- colorQuantile("Greens", NULL, n = 8)
+popup <- paste0("Median household income: ", as.character(data_merged$hhincome))
+
+p <- leaflet() %>%
+      addProviderTiles(providers$OpenStreetMap) %>%
+      addPolygons(data = data_merged,
+      fillColor = pal(data_merged$hhincome),
+      fillOpacity = 0.7,
+      weight = 0.2,
+      smoothFactor = 0.2,
+      popup = popup) %>%
+      
+     setView(xlong, ylat, zoom = 11) %>%
+     addLegend(pal = pal, values = data_merged$hhincome,
+               position = "topright",
+               title = "Income in Lancaster County")
+p  
+
+```
+
+
+```{r savemap, echo=FALSE, include=FALSE}
+##    Save map with leaflet layers, an html file type, as as image file:
+##    devtools::install_github('wch/webshot')
+
+##    webshot::install_phantomjs()
+library(htmlwidgets)
+library(webshot)
+
+## save html to png
+saveWidget(p, "temp.html", selfcontained = FALSE)
+webshot("temp.html", file = "Lancaster_Income.png",
+        cliprect = "viewport")
+```
+
